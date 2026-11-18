@@ -2,7 +2,9 @@
 
 EasyRead 是一款面向 HarmonyOS 平板、2-in-1 与手机的本地电子书阅读器，使用 ArkTS / ArkUI 原生实现。书籍由你自行导入，不提供在线书城；本地书库永久免费，可选的 WebDAV 书库与多设备同步通过一次性授权码解锁。
 
-EasyRead is an independent, native HarmonyOS ebook reader. Local reading is free; the optional WebDAV library is unlocked with an offline Ed25519 license code. This repository contains source code only.
+EasyRead is an independent, native HarmonyOS ebook reader. Local reading is free; the optional WebDAV library is unlocked with an offline Ed25519 license code. This repository and its releases contain source code only.
+
+> **没有可直接下载安装的 HAP。** HarmonyOS 目前不支持 HAP 侧载，安装包必须使用华为开发者证书和匹配的 profile 签名。GitHub Release 仅提供源码；请在 DevEco Studio 中按「构建与安装」自行签名构建。仓库内不包含任何证书、签名 profile 或签名口令。
 
 同一作者的 macOS 版：[KBDZequalsCK/EasyRead](https://github.com/KBDZequalsCK/EasyRead)
 
