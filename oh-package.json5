@@ -1,0 +1,11 @@
+{
+  "modelVersion": "5.0.0",
+  "name": "easyread_harmony",
+  "version": "1.0.0",
+  "description": "EasyRead for HarmonyOS tablets",
+  "main": "",
+  "author": "kbdz",
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {}
+}

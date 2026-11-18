@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "EasyRead reading app"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "EasyRead"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "EasyRead"
+    }
+  ]
+}

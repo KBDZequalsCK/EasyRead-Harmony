@@ -1,0 +1,37 @@
+# macOS
+.DS_Store
+
+# DevEco Studio / hvigor build output
+.idea/
+.hvigor/
+build/
+entry/build/
+**/build/
+oh_modules/
+**/oh_modules/
+local.properties
+*.hap
+*.hsp
+*.har
+*.app
+*.log
+
+# Signing materials and local signing profiles: never commit these.
+*.p12
+*.p7b
+*.cer
+*.csr
+*.key
+*.pem
+signing/
+build-profile.signed*.json5
+*.local.json5
+
+# License signing material stays outside the repository.
+.easyread-license/
+license-keys/
+
+# Local-only store submission material (outdated screenshots, IAP copy, etc.).
+appgallery/
+store/
+.qoder/

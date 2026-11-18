@@ -1,0 +1,136 @@
+# EasyRead for HarmonyOS
+
+EasyRead 是一款面向 HarmonyOS 平板、2-in-1 与手机的本地电子书阅读器，使用 ArkTS / ArkUI 原生实现。书籍由你自行导入，不提供在线书城；本地书库永久免费，可选的 WebDAV 书库与多设备同步通过一次性授权码解锁。
+
+EasyRead is an independent, native HarmonyOS ebook reader. Local reading is free; the optional WebDAV library is unlocked with an offline Ed25519 license code. This repository contains source code only.
+
+同一作者的 macOS 版：[KBDZequalsCK/EasyRead](https://github.com/KBDZequalsCK/EasyRead)
+
+![书架与阅读器](docs/screenshots/01-library-reader.png)
+
+## 功能
+
+- **本地书库**：从系统文件选择器导入书籍，或关联一个本地文件夹作为书库；不扫描整个存储空间。
+- **多种格式**：EPUB、TXT、PDF、MOBI、AZW、AZW3、FB2、CBZ 漫画、RTF、DOCX、Markdown。
+- **阅读体验**：纸白、米黄、浅绿、夜间四种主题，衬线、黑体、楷体、系统字体，字号、行距、页边距、左右分页与上下滚动、单栏与双栏。
+- **书籍结构**：目录、书签、笔记、阅读进度、章节进度；EPUB 可选保留出版社样式。
+- **本地优先**：书籍、封面、阅读进度、书签、笔记和设置保存在应用沙箱；断网时本地功能完整可用。
+- **WebDAV 书库（可选付费）**：连接坚果云、Nextcloud 或通用 WebDAV，合并云端书籍，上传、下载并双向合并阅读进度。支持 EasyRead 与 ZenReader（极简阅读兼容）两种同步目录。
+- **隐私设计**：没有广告、统计、推送或社交 SDK，没有开发者服务器；WebDAV 数据只发送到你填写的服务器。
+
+## 免费与解锁
+
+本地书库、导入、阅读、书签、笔记和本地文件夹功能永久免费。
+
+WebDAV 云端书架与同步是 **¥8 一次性买断**，不自动续费，使用离线授权码解锁。授权码与 macOS 版 EasyRead 共用同一套商品和密钥：格式为 `ERPRO1.<payload>.<signature>`，由 Ed25519 公钥在本机离线校验，不需要注册账号，也没有授权服务器。
+
+### 购买授权码
+
+爱发电商品：**EasyRead Pro（WebDAV 书库解锁）**  
+<https://ifdian.net/item/433d9ac0e31111f181f552540025c377>
+
+支持作者 / 爱发电主页：<https://ifdian.net/a/easyread>
+
+当前商品售价 ¥8，不限购买数量。爱发电账号截至 2026-11-18 仍在创作者认证中，平台可能用认证提示替代自动回复；如果没有自动收到授权码，请在爱发电站内私信发送订单号，由作者手动补发。多台设备请分别购买订单。
+
+### 激活
+
+1. 在爱发电完成购买，取得以 `ERPRO1.` 开头的授权码。
+2. 打开 EasyRead，点击书架中的 **WebDAV 书库** 或解锁入口。
+3. 把授权码粘贴到解锁页，点击 **激活授权码**。
+4. 首次激活会把授权码与本机设备绑定信息一起保存在应用沙箱，之后每次启动都在本机离线校验。
+
+### 关于“一码一机”
+
+授权码首次激活时会尝试读取系统为本开发者提供的 ODID，并只保存它的 SHA-256 单向哈希，作为本机防拷贝措施。EasyRead 没有服务器，因此这是本地尽力绑定，不是服务器强制的“一码一机”：拿到原始授权码的人仍可在另一台设备上重新激活。请勿公开分享授权码。
+
+正常换机时，在新设备重新输入授权码即可；如果旧设备仍保留授权，无需也无法联网注销。订阅、退款和订单问题请通过爱发电处理。
+
+## 构建与安装
+
+> 本仓库只提供源码，**不提供预签名 HAP**，也不提供签名服务。HarmonyOS 不允许像 Android APK 那样自由侧载：安装包必须使用华为开发者证书和匹配的 profile 签名，且真机调试通常需要把设备加入调试 profile。
+
+### 环境
+
+- DevEco Studio 26.0.0（HarmonyOS SDK API 26）
+- 设备系统 API 12 及以上
+- 一个可用的华为开发者签名配置（DevEco 自动签名或你自己的证书）
+
+### 步骤
+
+1. 克隆仓库：
+
+   ```bash
+   git clone https://github.com/KBDZequalsCK/EasyRead-Harmony.git
+   cd EasyRead-Harmony
+   ```
+
+2. 用 DevEco Studio 打开项目目录。
+3. 打开 **File → Project Structure → Signing Configs**，启用 **Automatically generate signature**，按提示登录华为账号并连接设备；或配置你自己的证书、profile 与密钥。
+4. 选择 `entry` 模块，点击 **Run** 构建并安装。
+
+命令行构建需要先配置签名，然后在项目根目录执行 hvigor。如果 `hvigorw` 不在 `PATH` 中，可使用 DevEco Studio 自带的版本（macOS 默认路径如下）：
+
+```bash
+/Applications/DevEco-Studio.app/Contents/tools/hvigor/bin/hvigorw \
+  assembleHap --mode module -p product=default -p module=entry@default -p buildMode=debug --no-daemon
+```
+
+仓库中的 `build-profile.json5` 特意不包含任何 `signingConfigs`、证书路径或口令，请勿把自己的签名材料提交到公开仓库。
+
+正式对外分发 HarmonyOS 应用仍需通过华为应用市场，或使用华为允许的测试、企业内部渠道。
+
+## 项目结构
+
+```text
+AppScope/                         应用级配置与图标
+entry/src/main/ets/
+  pages/Index.ets                 书架、阅读器与设置界面
+  service/
+    LicenseService.ets            Ed25519 授权码校验与设备绑定
+    BookService.ets               书籍导入、解析与缓存
+    FolderService.ets             本地文件夹书库
+    WebDavClient.ets              WebDAV 协议客户端
+    ZenSyncService.ets            书库与阅读进度同步
+    SettingsStore.ets             设置、隐私同意与同步配置
+  parser/                         EPUB/TXT/PDF/MOBI/FB2/CBZ/RTF/DOCX/Markdown
+  components/                     主题与隐私政策
+docs/privacy-policy.md            隐私政策
+docs/screenshots/                 README 截图
+samples/                          可用于试用的公有领域样书
+```
+
+## 样例书籍
+
+`samples/` 中包含六本由脚本生成的 EPUB 样书，正文均为公有领域中文作品，可直接导入试用：
+
+- 朱自清《背影》《荷塘月色》
+- 鲁迅《故乡》
+- 老舍《济南的冬天》
+- 蘅塘退士编《唐诗选》
+- 王国维《人间词话》
+
+生成脚本为 `samples/make_books.py`，需要 Pillow 与 macOS 系统字体；EPUB 已随仓库提供，无需重新生成。
+
+## 隐私
+
+EasyRead 不收集 IMEI、OAID 等广告标识，不进行用户画像、统计分析或广告投放，也不含支付 SDK。
+
+- 激活授权码时读取系统为开发者提供的 ODID，只在本机保存 SHA-256 哈希。
+- 授权码、授权 ID、签发/激活时间和设备绑定哈希保存在应用沙箱。
+- WebDAV 账号、应用密码或令牌只保存在本机，仅发送给你填写的 WebDAV 服务器。
+- 购买与付款由爱发电处理，EasyRead 不接触银行卡号、支付密码或爱发电账号信息。
+
+完整说明见 [隐私政策](docs/privacy-policy.md)。
+
+## 许可证
+
+源代码以 [MIT License](LICENSE) 发布，Copyright © 2026 kbdz。
+
+`samples/` 中的作品为公有领域文本，EPUB 由本仓库脚本生成；截图为本应用界面截图。
+
+## 反馈
+
+问题与建议：<https://github.com/KBDZequalsCK/EasyRead-Harmony/issues>
+
+支持项目：<https://ifdian.net/a/easyread>
