@@ -8,6 +8,8 @@ EasyRead is an independent, native HarmonyOS ebook reader. Local reading is free
 
 同一作者的 macOS 版：[KBDZequalsCK/EasyRead](https://github.com/KBDZequalsCK/EasyRead)
 
+第一次使用？安装、书架导入、阅读操作、WebDAV 同步和常见问题见 **[使用说明](docs/user-guide.md)**。
+
 ![书架与阅读器](docs/screenshots/01-library-reader.png)
 
 ## 功能
@@ -97,6 +99,7 @@ entry/src/main/ets/
     SettingsStore.ets             设置、隐私同意与同步配置
   parser/                         EPUB/TXT/PDF/MOBI/FB2/CBZ/RTF/DOCX/Markdown
   components/                     主题与隐私政策
+docs/user-guide.md                使用说明
 docs/privacy-policy.md            隐私政策
 docs/screenshots/                 README 截图
 samples/                          可用于试用的公有领域样书
