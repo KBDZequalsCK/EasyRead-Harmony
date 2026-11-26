@@ -119,8 +119,6 @@ export struct LibraryChip {
   @Prop count: number = 0;
   @Prop selected: boolean = false;
   @Prop themeName: string = 'paper';
-  /** Optional price/lock hint, for example “¥8”. */
-  @Prop badge: string = '';
   onTap: () => void = (): void => {};
 
   build() {
@@ -132,14 +130,6 @@ export struct LibraryChip {
       Text('' + this.count)
         .fontSize(10)
         .fontColor(this.selected ? Theme.bg(this.themeName) : Theme.muted(this.themeName))
-      if (this.badge.length > 0) {
-        Text(this.badge)
-          .fontSize(9)
-          .fontColor(this.selected ? Theme.bg(this.themeName) : Theme.accent(this.themeName))
-          .padding({ left: 5, right: 5, top: 1, bottom: 1 })
-          .backgroundColor(this.selected ? '#22FFFFFF' : Theme.surface(this.themeName))
-          .borderRadius(6)
-      }
     }
     .padding({ left: 13, right: 13, top: 7, bottom: 7 })
     .backgroundColor(this.selected ? Theme.accent(this.themeName) : '#00000000')

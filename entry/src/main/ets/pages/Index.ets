@@ -4,7 +4,6 @@ import { picker } from '@kit.CoreFileKit';
 import { image } from '@kit.ImageKit';
 import { pdfService, pdfViewManager, PdfView } from '@kit.PDFKit';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { Want } from '@kit.AbilityKit';
 import { TextModel } from '../parser/BookTypes';
 import { LibraryBook, BookmarkItem, ReaderChapter, ReaderSettings, ReaderProgress } from '../model/LibraryModels';
 import { BookSource, SyncProvider, SyncNamespace } from '../model/LibraryModels';
@@ -18,7 +17,6 @@ import { ZenSyncService } from '../service/ZenSyncService';
 import { ZenTextLocator } from '../service/ZenTextLocator';
 import { WebDavClient } from '../service/WebDavClient';
 import { AppContext, AppPaths, FileService } from '../service/FileService';
-import { LicenseService } from '../service/LicenseService';
 import { TextSupport } from '../service/TextSupport';
 import { JsonCodec, JsonNode } from '../parser/ZenJson';
 import { Theme } from '../components/Theme';
@@ -116,13 +114,6 @@ struct Index {
   @State privacyAccepted: boolean = false;
   @State privacyDeclined: boolean = false;
   @State privacyChecked: boolean = false;
-  /** The WebDAV shelf is unlocked by an offline license code. */
-  @State webdavUnlocked: boolean = false;
-  @State licenseBusy: boolean = false;
-  @State licenseStatus: string = '';
-  @State licenseCode: string = '';
-  @State licenseDebug: boolean = false;
-  @State licenseNotice: string = '';
   /**
    * A window snapshot of the last reading screen, shown from the very first
    * frame after a cold start until the cached page has re-typeset itself.
@@ -201,19 +192,7 @@ struct Index {
     LibraryStore.shared().load();
     SettingsStore.shared().load();
     BookmarkStore.shared().load();
-    LicenseService.shared().loadLocal();
-    this.webdavUnlocked = LicenseService.shared().isUnlocked();
-    this.licenseDebug = LicenseService.shared().isDebugBuild();
-    if (LicenseService.shared().removedMismatchedLicense()) {
-      this.licenseNotice = '之前保存的授权码已绑定另一台设备，已从本机移除。请重新粘贴授权码；正常换机可联系作者处理。';
-    }
     this.activeSource = LibraryStore.shared().activeSource;
-    if (this.activeSource === BookSource.WEBDAV && !this.webdavUnlocked) {
-      // A reinstall or a missing license must not expose cloud settings.
-      this.activeSource = BookSource.LOCAL;
-      LibraryStore.shared().activeSource = BookSource.LOCAL;
-      LibraryStore.shared().scheduleSave();
-    }
     const stored = SettingsStore.shared().reader;
     this.themeName = stored.theme;
     this.fontSize = stored.fontSize;
@@ -529,7 +508,7 @@ struct Index {
   }
 
   private maybeAutoSync(): void {
-    if (!this.privacyAccepted || !LicenseService.shared().isUnlocked()) {
+    if (!this.privacyAccepted) {
       return;
     }
     const config = SettingsStore.shared().sync;
@@ -1896,10 +1875,6 @@ struct Index {
           message: book.source === BookSource.JIANGUOYUN ? '已删除本地副本，下次同步会重新下载' : '已删除本地文件'
         });
       } else if (action === 'delete-cloud') {
-        if (!LicenseService.shared().isUnlocked()) {
-          this.openUnlockPanel();
-          return;
-        }
         if (this.syncBusy) {
           promptAction.showToast({ message: '同步进行中，请稍后再试' });
           return;
@@ -1932,10 +1907,6 @@ struct Index {
   }
 
   private switchSource(source: string): void {
-    if (source === BookSource.WEBDAV && !LicenseService.shared().isUnlocked()) {
-      this.openUnlockPanel();
-      return;
-    }
     this.activeSource = source;
     LibraryStore.shared().activeSource = source;
     LibraryStore.shared().scheduleSave();
@@ -1943,10 +1914,6 @@ struct Index {
   }
 
   private openSyncPanel(): void {
-    if (!LicenseService.shared().isUnlocked()) {
-      this.openUnlockPanel();
-      return;
-    }
     const config = SettingsStore.shared().sync;
     this.syncProvider = config.provider;
     this.syncServer = config.server;
@@ -1957,88 +1924,6 @@ struct Index {
     this.panel = 'sync';
   }
 
-  private openUnlockPanel(): void {
-    this.licenseStatus = '';
-    this.licenseCode = '';
-    this.panel = 'unlock';
-  }
-
-  /** Opens the 爱发电 product in the browser; payment never happens in-app. */
-  private openPurchasePage(): void {
-    const url = LicenseService.PURCHASE_URL;
-    const context = AppContext.abilityContext();
-    this.licenseStatus = '已在浏览器打开爱发电页面；付款后把收到的授权码粘贴到下面。';
-    context.openLink(url, { appLinkingOnly: false }).catch((): void => {
-      const want: Want = {
-        action: 'ohos.want.action.viewData',
-        uri: url
-      };
-      context.startAbility(want).catch((): void => {
-        this.licenseStatus = '无法打开浏览器，请手动访问 ' + url;
-      });
-    });
-  }
-
-  private activateLicense(): void {
-    if (this.licenseBusy) {
-      return;
-    }
-    const code = this.licenseCode.trim();
-    if (code.length === 0) {
-      this.licenseStatus = '请先粘贴授权码。';
-      return;
-    }
-    this.licenseBusy = true;
-    this.licenseStatus = '正在校验授权码…';
-    const error = LicenseService.shared().activate(code);
-    this.licenseBusy = false;
-    this.webdavUnlocked = LicenseService.shared().isUnlocked();
-    if (error.length > 0) {
-      this.licenseStatus = error;
-      return;
-    }
-    this.licenseCode = '';
-    this.licenseStatus = '';
-    this.licenseNotice = '';
-    this.finishUnlockFlow('已解锁 WebDAV 书库');
-  }
-
-  /**
-   * After activation, land on the WebDAV shelf. If no account is configured
-   * yet, open the settings panel instead of syncing: unlocking never starts
-   * a network transfer by itself.
-   */
-  private finishUnlockFlow(message: string): void {
-    this.webdavUnlocked = true;
-    promptAction.showToast({ message: message });
-    this.panel = '';
-    this.switchSource(BookSource.WEBDAV);
-    const config = SettingsStore.shared().sync;
-    if (config.username.trim().length === 0 || config.password.length === 0) {
-      this.openSyncPanel();
-    } else {
-      this.syncStatus = '已解锁，可点同步按钮拉取云端书架';
-    }
-  }
-
-  private toggleDebugUnlock(): void {
-    if (!this.licenseDebug) {
-      return;
-    }
-    if (LicenseService.shared().isUnlocked()) {
-      LicenseService.shared().debugReset();
-      this.webdavUnlocked = false;
-      this.licenseStatus = '调试解锁已清除';
-      if (this.activeSource === BookSource.WEBDAV) {
-        this.switchSource(BookSource.LOCAL);
-      }
-    } else {
-      LicenseService.shared().debugUnlock();
-      this.webdavUnlocked = LicenseService.shared().isUnlocked();
-      this.licenseStatus = this.webdavUnlocked ? '已模拟解锁（仅调试包，不会产生扣费）' : '调试解锁失败';
-    }
-  }
-
   /**
    * Pull-to-refresh on the shelf: merge cloud progress for the WebDAV shelf,
    * rescan the linked folder for the local shelf.
@@ -2046,10 +1931,6 @@ struct Index {
   private async refreshShelf(): Promise<void> {
     try {
       if (this.activeSource === BookSource.WEBDAV) {
-        if (!LicenseService.shared().isUnlocked()) {
-          this.openUnlockPanel();
-          return;
-        }
         const config = SettingsStore.shared().sync;
         if (config.username.trim().length === 0 || config.password.length === 0) {
           promptAction.showToast({ message: '请先填写 WebDAV 账号和应用密码' });
@@ -2071,10 +1952,6 @@ struct Index {
 
   private async runSync(mode: string): Promise<void> {
     if (!this.privacyAccepted || this.syncBusy) {
-      return;
-    }
-    if (!LicenseService.shared().isUnlocked()) {
-      this.openUnlockPanel();
       return;
     }
     const config = SettingsStore.shared().sync;
@@ -2159,10 +2036,6 @@ struct Index {
 
   private async testSyncConnection(): Promise<void> {
     if (!this.privacyAccepted) {
-      return;
-    }
-    if (!LicenseService.shared().isUnlocked()) {
-      this.openUnlockPanel();
       return;
     }
     try {
@@ -2437,7 +2310,6 @@ struct Index {
             count: this.cloudBookCount,
             selected: this.activeSource === BookSource.WEBDAV,
             themeName: this.themeName,
-            badge: this.webdavUnlocked ? '' : '¥8',
             onTap: (): void => {
               this.switchSource(BookSource.WEBDAV);
             }
@@ -2493,39 +2365,6 @@ struct Index {
       }
       .width('100%')
       .padding({ left: 20, right: 12, top: 14 })
-
-      if (!this.webdavUnlocked) {
-        Column() {
-          Row({ space: 8 }) {
-            Text('云端书架')
-              .fontSize(12)
-              .fontWeight(FontWeight.Medium)
-              .fontColor(Theme.fg(this.themeName))
-            Text('¥8 一次性解锁 WebDAV 同步 · 本地书库永久免费')
-              .fontSize(10)
-              .fontColor(Theme.muted(this.themeName))
-              .maxLines(2)
-              .layoutWeight(1)
-            Button('解锁')
-              .fontSize(11)
-              .fontColor(Theme.bg(this.themeName))
-              .backgroundColor(Theme.accent(this.themeName))
-              .borderRadius(11)
-              .height(26)
-              .padding({ left: 12, right: 12 })
-              .onClick((): void => {
-                this.openUnlockPanel();
-              })
-          }
-          .width('100%')
-          .padding({ left: 12, right: 10, top: 8, bottom: 8 })
-          .backgroundColor(Theme.card(this.themeName))
-          .borderRadius(11)
-        }
-        .width('100%')
-        .padding({ left: 20, right: 20, top: 10 })
-        .alignItems(HorizontalAlign.Start)
-      }
 
       if (this.folderBusy || this.syncBusy) {
         Row({ space: 8 }) {
@@ -3976,293 +3815,6 @@ struct Index {
   }
 
   @Builder
-  unlockFeature(title: string, detail: string) {
-    Row({ space: 10 }) {
-      Text('✓')
-        .fontSize(11)
-        .fontColor(Theme.bg(this.themeName))
-        .width(20)
-        .height(20)
-        .lineHeight(20)
-        .textAlign(TextAlign.Center)
-        .backgroundColor(Theme.accent(this.themeName))
-        .borderRadius(10)
-      Column({ space: 2 }) {
-        Text(title)
-          .fontSize(13)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(Theme.fg(this.themeName))
-          .width('100%')
-        Text(detail)
-          .fontSize(10)
-          .lineHeight(15)
-          .fontColor(Theme.muted(this.themeName))
-          .width('100%')
-      }
-      .alignItems(HorizontalAlign.Start)
-      .layoutWeight(1)
-    }
-    .width('100%')
-    .alignItems(VerticalAlign.Top)
-  }
-
-  @Builder
-  unlockPanel() {
-    Column() {
-      Row() {
-        Column({ space: 3 }) {
-          Text('WebDAV 书库')
-            .fontSize(20)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(Theme.fg(this.themeName))
-            .fontFamily('serif')
-          Text('一次性购买 · 永久解锁 · 不自动续费')
-            .fontSize(11)
-            .fontColor(Theme.muted(this.themeName))
-        }
-        .alignItems(HorizontalAlign.Start)
-        .layoutWeight(1)
-        Text('×')
-          .fontSize(18)
-          .fontColor(Theme.muted(this.themeName))
-          .width(32)
-          .height(32)
-          .textAlign(TextAlign.Center)
-          .backgroundColor(Theme.card(this.themeName))
-          .borderRadius(16)
-          .onClick((): void => {
-            this.panel = '';
-          })
-      }
-      .width('100%')
-      .padding({ left: 20, right: 14, top: 18, bottom: 10 })
-
-      Scroll() {
-        Column({ space: 14 }) {
-          Column({ space: 8 }) {
-            Row({ space: 10 }) {
-              Text(LicenseService.PRICE_DISPLAY)
-                .fontSize(34)
-                .fontFamily('serif')
-                .fontWeight(FontWeight.Medium)
-                .fontColor(Theme.accent(this.themeName))
-              Text(this.webdavUnlocked ? '已解锁' : '一次买断')
-                .fontSize(10)
-                .fontColor(Theme.muted(this.themeName))
-                .padding({ left: 8, right: 8, top: 3, bottom: 3 })
-                .backgroundColor(Theme.surface(this.themeName))
-                .borderRadius(7)
-                .margin({ top: 10 })
-            }
-            .width('100%')
-
-            Text('本地书库永久免费；WebDAV 云端书架与双向同步是一次性付费功能。')
-              .fontSize(11)
-              .lineHeight(17)
-              .fontColor(Theme.fg(this.themeName))
-              .width('100%')
-            Text('在爱发电购买后获得授权码；首次激活绑定当前设备，之后离线校验，不需要注册账号。')
-              .fontSize(10)
-              .lineHeight(15)
-              .fontColor(Theme.muted(this.themeName))
-              .width('100%')
-          }
-          .width('100%')
-          .padding(16)
-          .alignItems(HorizontalAlign.Start)
-          .backgroundColor(Theme.card(this.themeName))
-          .borderRadius(16)
-          .border({ width: 1, color: Theme.line(this.themeName) })
-
-          Column({ space: 14 }) {
-            this.unlockFeature('云端书架',
-              '连接坚果云、Nextcloud 或自定义 WebDAV，把云端书籍合并到书架。')
-            this.unlockFeature('多设备同步',
-              '通过你配置的 WebDAV 服务，在多台设备之间同步书籍文件和阅读进度。')
-            this.unlockFeature('本地功能不受影响',
-              'TXT、EPUB、PDF 等导入阅读与本地文件夹功能继续免费使用。')
-          }
-          .width('100%')
-          .padding(16)
-          .alignItems(HorizontalAlign.Start)
-          .backgroundColor(Theme.card(this.themeName))
-          .borderRadius(16)
-          .border({ width: 1, color: Theme.line(this.themeName) })
-
-          if (this.licenseNotice.length > 0 && !this.webdavUnlocked) {
-            Text(this.licenseNotice)
-              .fontSize(10)
-              .lineHeight(15)
-              .fontColor('#B04A3A')
-              .width('100%')
-              .padding(12)
-              .backgroundColor(Theme.card(this.themeName))
-              .borderRadius(10)
-              .border({ width: 1, color: Theme.line(this.themeName) })
-          }
-
-          Column({ space: 12 }) {
-            if (!this.webdavUnlocked) {
-              Button('在爱发电购买 ' + LicenseService.PRICE_DISPLAY)
-                .fontSize(14)
-                .fontColor(Theme.bg(this.themeName))
-                .backgroundColor(Theme.accent(this.themeName))
-                .borderRadius(14)
-                .height(44)
-                .width('100%')
-                .onClick((): void => {
-                  this.openPurchasePage();
-                })
-              Text('购买与付款由爱发电处理。付款后把订单附带的授权码粘贴到下方；不会自动续费。')
-                .fontSize(10)
-                .lineHeight(15)
-                .fontColor(Theme.muted(this.themeName))
-                .width('100%')
-            } else {
-              Row({ space: 8 }) {
-                Text('WebDAV 书库已解锁')
-                  .fontSize(13)
-                  .fontWeight(FontWeight.Medium)
-                  .fontColor(Theme.fg(this.themeName))
-                Blank()
-                if (LicenseService.shared().isDeviceBound()) {
-                  Text('已绑定此设备')
-                    .fontSize(10)
-                    .fontColor(Theme.muted(this.themeName))
-                }
-              }
-              .width('100%')
-              if (LicenseService.shared().licenseIDDescription().length > 0) {
-                Text('授权 ID：' + LicenseService.shared().licenseIDDescription() + '… · 离线校验')
-                  .fontSize(10)
-                  .fontColor(Theme.muted(this.themeName))
-                  .width('100%')
-              }
-              Button('进入 WebDAV 书库')
-                .fontSize(14)
-                .fontColor(Theme.bg(this.themeName))
-                .backgroundColor(Theme.accent(this.themeName))
-                .borderRadius(14)
-                .height(44)
-                .width('100%')
-                .onClick((): void => {
-                  this.panel = '';
-                  this.switchSource(BookSource.WEBDAV);
-                  const config = SettingsStore.shared().sync;
-                  if (config.username.trim().length === 0 || config.password.length === 0) {
-                    this.openSyncPanel();
-                  }
-                })
-            }
-
-            Divider()
-              .color(Theme.line(this.themeName))
-              .strokeWidth(1)
-
-            Text(this.webdavUnlocked ? '更换授权码' : '已有授权码')
-              .fontSize(11)
-              .fontWeight(FontWeight.Medium)
-              .fontColor(Theme.fg(this.themeName))
-              .width('100%')
-            TextInput({ text: this.licenseCode, placeholder: '粘贴以 ERPRO1. 开头的授权码' })
-              .fontSize(12)
-              .fontColor(Theme.fg(this.themeName))
-              .placeholderColor(Theme.muted(this.themeName))
-              .height(42)
-              .padding({ left: 12, right: 12 })
-              .backgroundColor(Theme.surface(this.themeName))
-              .borderRadius(10)
-              .onChange((value: string): void => {
-                this.licenseCode = value;
-              })
-            Button(this.licenseBusy ? '正在校验…' : '激活授权码')
-              .fontSize(12)
-              .fontColor(this.licenseCode.trim().length > 0 ? Theme.fg(this.themeName) : Theme.muted(this.themeName))
-              .backgroundColor(Theme.card(this.themeName))
-              .borderRadius(12)
-              .height(38)
-              .width('100%')
-              .enabled(!this.licenseBusy && this.licenseCode.trim().length > 0)
-              .onClick((): void => {
-                this.activateLicense();
-              })
-
-            if (this.licenseBusy || this.licenseStatus.length > 0) {
-              Row({ space: 8 }) {
-                if (this.licenseBusy) {
-                  LoadingProgress().width(14).height(14).color(Theme.accent(this.themeName))
-                }
-                Text(this.licenseStatus)
-                  .fontSize(11)
-                  .lineHeight(16)
-                  .fontColor(this.licenseStatus.indexOf('失败') >= 0 ||
-                    this.licenseStatus.indexOf('无效') >= 0 ||
-                    this.licenseStatus.indexOf('不正确') >= 0 ||
-                    this.licenseStatus.indexOf('过期') >= 0 ||
-                    this.licenseStatus.indexOf('不适用') >= 0 ||
-                    this.licenseStatus.indexOf('另一台') >= 0 ||
-                    this.licenseStatus.indexOf('无法') >= 0 ||
-                    this.licenseStatus.indexOf('请先') >= 0 ? '#B04A3A' : Theme.muted(this.themeName))
-                  .layoutWeight(1)
-              }
-              .width('100%')
-            }
-          }
-          .width('100%')
-          .padding(16)
-          .alignItems(HorizontalAlign.Start)
-          .backgroundColor(Theme.card(this.themeName))
-          .borderRadius(16)
-          .border({ width: 1, color: Theme.line(this.themeName) })
-
-          Text('授权码在本机离线校验，不需要账号；EasyRead 不接触银行卡号或支付密码，也不会自动同步或上传你的书库。')
-            .fontSize(10)
-            .lineHeight(15)
-            .fontColor(Theme.muted(this.themeName))
-            .width('100%')
-            .padding({ left: 2, right: 2 })
-
-          if (this.licenseDebug) {
-            Column({ space: 8 }) {
-              Text('调试选项（仅 debug 包可见）')
-                .fontSize(10)
-                .fontColor(Theme.muted(this.themeName))
-                .width('100%')
-              Button(this.webdavUnlocked ? '清除模拟解锁' : '模拟解锁（不会扣费）')
-                .fontSize(11)
-                .fontColor(Theme.fg(this.themeName))
-                .backgroundColor(Theme.surface(this.themeName))
-                .borderRadius(10)
-                .height(32)
-                .width('100%')
-                .onClick((): void => {
-                  this.toggleDebugUnlock();
-                })
-            }
-            .width('100%')
-            .padding(12)
-            .alignItems(HorizontalAlign.Start)
-            .backgroundColor(Theme.card(this.themeName))
-            .borderRadius(10)
-            .border({ width: 1, color: Theme.line(this.themeName) })
-          }
-
-          Blank().height(8)
-        }
-        .width('100%')
-        .alignItems(HorizontalAlign.Start)
-        .padding({ left: 16, right: 16, top: 4, bottom: 24 })
-      }
-      .layoutWeight(1)
-      .scrollBar(BarState.Off)
-      .align(Alignment.Top)
-    }
-    .width('100%')
-    .height('100%')
-    .backgroundColor(Theme.surface(this.themeName))
-  }
-
-  @Builder
   syncPanel() {
     Column() {
       Row() {
@@ -4639,23 +4191,6 @@ struct Index {
               this.panel = 'privacy';
             })
 
-          if (this.licenseDebug) {
-            Text('调试选项（仅 debug 包可见）')
-              .fontSize(10)
-              .fontColor(Theme.muted(this.themeName))
-              .width('100%')
-            Button(this.webdavUnlocked ? '清除模拟解锁' : '模拟解锁（不会扣费）')
-              .fontSize(11)
-              .fontColor(Theme.fg(this.themeName))
-              .backgroundColor(Theme.surface(this.themeName))
-              .borderRadius(10)
-              .height(34)
-              .width('100%')
-              .onClick((): void => {
-                this.toggleDebugUnlock();
-              })
-          }
-
           Blank().height(8)
         }
         .width('100%')
@@ -4731,8 +4266,6 @@ struct Index {
           this.settingsPanel()
         } else if (this.panel === 'sync') {
           this.syncPanel()
-        } else if (this.panel === 'unlock') {
-          this.unlockPanel()
         } else if (this.panel === 'privacy') {
           this.privacyPanel()
         }

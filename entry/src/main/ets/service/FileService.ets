@@ -65,11 +65,6 @@ export class AppPaths {
     return AppPaths.root() + '/privacy.json';
   }
 
-  /** Locally cached WebDAV license; re-verified offline on every launch. */
-  static licenseFile(): string {
-    return AppPaths.root() + '/license.json';
-  }
-
   static cacheRoot(): string {
     return AppContext.cacheDir() + '/EasyRead';
   }

@@ -27,10 +27,6 @@ signing/
 build-profile.signed*.json5
 *.local.json5
 
-# License signing material stays outside the repository.
-.easyread-license/
-license-keys/
-
 # Local-only store submission material (outdated screenshots, IAP copy, etc.).
 appgallery/
 store/

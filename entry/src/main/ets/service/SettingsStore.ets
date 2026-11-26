@@ -5,7 +5,7 @@ import { util } from '@kit.ArkTS';
 
 export class SettingsStore {
   /** Bump this when the in-app privacy policy changes materially. */
-  static readonly PRIVACY_VERSION: number = 3;
+  static readonly PRIVACY_VERSION: number = 4;
 
   private static instance: SettingsStore | null = null;
   reader: ReaderSettings = new ReaderSettings();
