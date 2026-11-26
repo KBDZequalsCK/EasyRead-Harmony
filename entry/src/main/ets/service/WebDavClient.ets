@@ -3,6 +3,7 @@ import { util } from '@kit.ArkTS';
 import { JsonCodec, JsonNode } from '../parser/ZenJson';
 import { SyncNamespace } from '../model/LibraryModels';
 import { HashService } from './HashService';
+import { normalizeWebDavRoots, WebDavUrlError, webDavUrl } from './WebDavUrl';
 
 export class WebDavError extends Error {
   status: number = 0;
@@ -37,12 +38,10 @@ export class SnapshotInfo {
   node: JsonNode = JsonNode.object();
 }
 
-class NormalizedServer {
-  url: string = '';
-  collection: string = '';
-}
-
 export class WebDavClient {
+  /** The account root the user typed, e.g. https://dav.jianguoyun.com/dav/ */
+  private accountUrl: string = '';
+  /** accountUrl + EasyRead or ZenReader/v1; used for every file request. */
   private rootUrl: string = '';
   private namespaceCollection: string = 'EasyRead';
   private username: string = '';
@@ -53,74 +52,18 @@ export class WebDavClient {
     namespace: string = SyncNamespace.EASYREAD) {
     this.username = username.trim();
     this.password = password;
-    const normalized = WebDavClient.normalizeServer(server, namespace);
-    this.rootUrl = normalized.url;
-    this.namespaceCollection = normalized.collection;
-  }
-
-  private static normalizeServer(server: string, namespace: string): NormalizedServer {
-    let value = server.trim();
-    const cut = value.search(/[?#]/);
-    if (cut >= 0) {
-      value = value.substring(0, cut);
-    }
-    while (value.endsWith('/')) {
-      value = value.substring(0, value.length - 1);
-    }
-    const match = value.match(/^(https?):\/\/([^\/]+)(\/.*)?$/i);
-    if (match === null) {
+    const collection = namespace === SyncNamespace.ZENREADER ? 'ZenReader/v1' : 'EasyRead';
+    try {
+      const roots = normalizeWebDavRoots(server, collection);
+      this.accountUrl = roots.accountUrl;
+      this.rootUrl = roots.rootUrl;
+      this.namespaceCollection = roots.collection;
+    } catch (error) {
+      if (error instanceof WebDavUrlError) {
+        throw new WebDavError(error.message);
+      }
       throw new WebDavError('服务器地址无效');
     }
-    const scheme = match[1].toLowerCase();
-    let host = match[2].toLowerCase();
-    if (host.startsWith('[')) {
-      const end = host.indexOf(']');
-      if (end >= 0) {
-        host = host.substring(0, end + 1);
-      }
-    } else {
-      const colon = host.indexOf(':');
-      if (colon >= 0) {
-        host = host.substring(0, colon);
-      }
-    }
-    if (scheme === 'http' && host !== '127.0.0.1' && host !== 'localhost' && host !== '[::1]') {
-      throw new WebDavError('除本机调试外，服务器必须使用 HTTPS');
-    }
-    let path = match[3] !== undefined ? match[3] : '';
-    while (path.endsWith('/')) {
-      path = path.substring(0, path.length - 1);
-    }
-
-    // Treat the folder selection in the UI as authoritative. If a newer
-    // configuration or copied URL already ends in EasyRead, ZenReader or
-    // ZenReader/v1, strip it instead of nesting one inside another.
-    let slash = path.lastIndexOf('/');
-    if (slash >= 0) {
-      const last = path.substring(slash + 1).toLowerCase();
-      if (last === 'v1') {
-        const before = path.substring(0, slash);
-        const parentSlash = before.lastIndexOf('/');
-        const parent = parentSlash >= 0 ?
-          before.substring(parentSlash + 1).toLowerCase() : before.toLowerCase();
-        if (parent === 'zenreader' || parent === 'easyread') {
-          path = parentSlash >= 0 ? before.substring(0, parentSlash) : '';
-        }
-      } else if (last === 'zenreader' || last === 'easyread') {
-        path = slash >= 0 ? path.substring(0, slash) : '';
-      }
-    }
-    while (path.endsWith('/')) {
-      path = path.substring(0, path.length - 1);
-    }
-
-    // ZenReader owns its versioned folder; EasyRead keeps its own folder
-    // clean because the payload already carries a formatVersion.
-    const collection = namespace === SyncNamespace.ZENREADER ? 'ZenReader/v1' : 'EasyRead';
-    const normalized = new NormalizedServer();
-    normalized.collection = collection;
-    normalized.url = scheme + '://' + match[2] + path + '/' + collection + '/';
-    return normalized;
   }
 
   get root(): string {
@@ -131,7 +74,7 @@ export class WebDavClient {
     return 'Basic ' + HashService.base64Utf8(this.username + ':' + this.password);
   }
 
-  private async execute(method: string, relativePath: string, depth: string,
+  private async execute(baseUrl: string, method: string, relativePath: string, depth: string,
     contentType: string, body: ArrayBuffer | null): Promise<HttpResult> {
     const client = http.createHttp();
     try {
@@ -163,7 +106,7 @@ export class WebDavClient {
       if (body !== null) {
         options.extraData = body;
       }
-      const response = await client.request(this.rootUrl + relativePath, options);
+      const response = await client.request(webDavUrl(baseUrl, relativePath), options);
       const result = new HttpResult();
       result.status = response.responseCode;
       if (response.result instanceof ArrayBuffer) {
@@ -195,10 +138,10 @@ export class WebDavClient {
     return String(error);
   }
 
-  private async requestWithRetry(method: string, relativePath: string, depth: string,
+  private async requestWithRetry(baseUrl: string, method: string, relativePath: string, depth: string,
     contentType: string, body: ArrayBuffer | null): Promise<HttpResult> {
     try {
-      return await this.execute(method, relativePath, depth, contentType, body);
+      return await this.execute(baseUrl, method, relativePath, depth, contentType, body);
     } catch (error) {
       if (error instanceof WebDavError && error.status !== 0) {
         throw error;
@@ -206,7 +149,7 @@ export class WebDavClient {
       await new Promise<void>((resolve: () => void): void => {
         setTimeout(resolve, 350);
       });
-      return await this.execute(method, relativePath, depth, contentType, body);
+      return await this.execute(baseUrl, method, relativePath, depth, contentType, body);
     }
   }
 
@@ -231,7 +174,7 @@ export class WebDavClient {
     const xmlBody = '<?xml version="1.0" encoding="utf-8"?>' +
       '<D:propfind xmlns:D="DAV:"><D:prop><D:resourcetype/></D:prop></D:propfind>';
     const result = await this.requestWithRetry(
-      'PROPFIND', 'snapshots/', '1', 'application/xml; charset=utf-8',
+      this.rootUrl, 'PROPFIND', 'snapshots/', '1', 'application/xml; charset=utf-8',
       new util.TextEncoder().encodeInto(xmlBody).buffer as ArrayBuffer
     );
     if (result.status === 404) {
@@ -264,7 +207,7 @@ export class WebDavClient {
     const xmlBody = '<?xml version="1.0" encoding="utf-8"?>' +
       '<D:propfind xmlns:D="DAV:"><D:prop><D:resourcetype/></D:prop></D:propfind>';
     const result = await this.requestWithRetry(
-      'PROPFIND', folder + '/', '1', 'application/xml; charset=utf-8',
+      this.rootUrl, 'PROPFIND', folder + '/', '1', 'application/xml; charset=utf-8',
       new util.TextEncoder().encodeInto(xmlBody).buffer as ArrayBuffer
     );
     if (result.status === 404) {
@@ -291,7 +234,7 @@ export class WebDavClient {
   }
 
   async get(relativePath: string): Promise<Uint8Array | null> {
-    const result = await this.requestWithRetry('GET', relativePath, '', '', null);
+    const result = await this.requestWithRetry(this.rootUrl, 'GET', relativePath, '', '', null);
     if (result.status === 404) {
       return null;
     }
@@ -306,42 +249,48 @@ export class WebDavClient {
       '<D:propfind xmlns:D="DAV:"><D:prop><D:resourcetype/></D:prop></D:propfind>';
   }
 
-  private async collectionExists(relativePath: string): Promise<boolean> {
+  private async collectionExistsAt(baseUrl: string, relativePath: string): Promise<boolean> {
     const result = await this.requestWithRetry(
-      'PROPFIND', relativePath + '/', '0', 'application/xml; charset=utf-8',
+      baseUrl, 'PROPFIND', relativePath + '/', '0', 'application/xml; charset=utf-8',
       new util.TextEncoder().encodeInto(WebDavClient.propfindBody()).buffer as ArrayBuffer
     );
     return result.status === 207 || result.status === 200;
   }
 
+  /** Creates a folder below the selected layout root (EasyRead / ZenReader/v1). */
   async ensureCollection(relativePath: string): Promise<void> {
-    const cached = this.ensured.get(relativePath);
+    await this.ensureCollectionAt(this.rootUrl, relativePath);
+  }
+
+  private async ensureCollectionAt(baseUrl: string, relativePath: string): Promise<void> {
+    const cacheKey = baseUrl + '\n' + relativePath;
+    const cached = this.ensured.get(cacheKey);
     if (cached !== undefined) {
       return;
     }
-    const result = await this.requestWithRetry('MKCOL', relativePath + '/', '', '', null);
+    const result = await this.requestWithRetry(baseUrl, 'MKCOL', relativePath + '/', '', '', null);
     if (result.status === 201 || result.status === 200 || result.status === 405) {
-      this.ensured.set(relativePath, true);
+      this.ensured.set(cacheKey, true);
       return;
     }
     if (result.status === 409) {
       // Most servers use 405 for an existing collection, but some WebDAV
       // implementations answer 409 either for "already here" or for a missing
       // parent. Check before treating it as a missing parent.
-      if (await this.collectionExists(relativePath)) {
-        this.ensured.set(relativePath, true);
+      if (await this.collectionExistsAt(baseUrl, relativePath)) {
+        this.ensured.set(cacheKey, true);
         return;
       }
       const slash = relativePath.lastIndexOf('/');
       if (slash > 0) {
-        await this.ensureCollection(relativePath.substring(0, slash));
-        const retry = await this.requestWithRetry('MKCOL', relativePath + '/', '', '', null);
+        await this.ensureCollectionAt(baseUrl, relativePath.substring(0, slash));
+        const retry = await this.requestWithRetry(baseUrl, 'MKCOL', relativePath + '/', '', '', null);
         let created = retry.status === 201 || retry.status === 200 || retry.status === 405;
         if (!created && retry.status === 409) {
-          created = await this.collectionExists(relativePath);
+          created = await this.collectionExistsAt(baseUrl, relativePath);
         }
         if (created) {
-          this.ensured.set(relativePath, true);
+          this.ensured.set(cacheKey, true);
           return;
         }
         throw new WebDavError('无法创建云端目录（HTTP ' + retry.status + '）', retry.status);
@@ -351,9 +300,12 @@ export class WebDavClient {
     throw new WebDavError('无法创建云端目录（HTTP ' + result.status + '）', result.status);
   }
 
-  /** Creates EasyRead (or ZenReader/v1) when the account has no such folder. */
+  /**
+   * Creates EasyRead (or ZenReader/v1) below the account root. This must use
+   * accountUrl, not rootUrl: rootUrl already ends with the layout folder.
+   */
   async ensureRoot(): Promise<void> {
-    await this.ensureCollection(this.namespaceCollection);
+    await this.ensureCollectionAt(this.accountUrl, this.namespaceCollection);
   }
 
   async ensureParent(relativePath: string): Promise<void> {
@@ -371,7 +323,7 @@ export class WebDavClient {
   async putObject(relativePath: string, bytes: Uint8Array, contentType: string): Promise<void> {
     await this.ensureParent(relativePath);
     const body = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-    const result = await this.requestWithRetry('PUT', relativePath, '', contentType, body);
+    const result = await this.requestWithRetry(this.rootUrl, 'PUT', relativePath, '', contentType, body);
     if (result.status !== 200 && result.status !== 201 && result.status !== 204) {
       throw new WebDavError('上传失败（HTTP ' + result.status + '）', result.status);
     }
@@ -381,7 +333,7 @@ export class WebDavClient {
     const path = 'snapshots/' + name + '/readerzen.json';
     await this.ensureParent(path);
     const body = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-    const result = await this.requestWithRetry('PUT', path, '', 'application/json; charset=utf-8', body);
+    const result = await this.requestWithRetry(this.rootUrl, 'PUT', path, '', 'application/json; charset=utf-8', body);
     if (result.status === 200 || result.status === 201 || result.status === 204) {
       return true;
     }
